@@ -15,7 +15,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-     <!-- Adicione no HEAD do seu HTML -->
+    <!-- Adicione no HEAD do seu HTML -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
@@ -2603,7 +2603,7 @@
     <footer class="site-footer">
         <div class="footer-content">
             <p>Desenvolvido por Fábio Mendes Rodrigues, Planejador da F.W. Company</p>
-            <p class="footer-version">Sistema de Gestão de EPIs - Versão 3.02</p>
+            <p class="footer-version">Sistema de Gestão de EPIs - Revisão 01</p>
         </div>
     </footer>
 
@@ -3089,7 +3089,7 @@
         }
 
         // ============================================
-        // SINCRONIZAÇÃO DE ATRIBUIÇÕES
+        // SINCRONIZAÇÃO DE ATRIBUIÇÕES - VERSÃO CORRIGIDA
         // ============================================
         async function syncAssignmentsToCloud() {
             if (!isSupabaseConnected || !supabaseClient) {
@@ -3112,26 +3112,44 @@
                         continue;
                     }
 
+                    // REMOVA data_cadastro daqui - ela não existe na tabela!
                     const supabaseData = {
                         epi_codigo: epi.code,
                         colaborador_matricula: collaborator.registration,
                         data_atribuicao: assignment.assignmentDate,
                         data_validade: assignment.expirationDate,
-                        status: assignment.status,
+                        status: assignment.status || 'Ativo',
                         observacoes: assignment.observations || '',
-                        usuario_atribuicao: currentUser?.name || 'Sistema',
-                        updated_at: new Date().toISOString()
+                        usuario_atribuicao: currentUser?.name || 'Sistema'
+                        // data_cadastro REMOVIDO!
                     };
 
                     const { error } = await supabaseClient
                         .from('atribuicoes')
-                        .upsert(supabaseData, {
-                            onConflict: 'epi_codigo,colaborador_matricula'
-                        });
+                        .insert(supabaseData);
 
                     if (error) {
-                        console.error('Erro ao enviar atribuição:', error);
-                        errorCount++;
+                        // Se der erro de duplicata, tenta UPDATE
+                        if (error.code === '23505') {
+                            const { error: updateError } = await supabaseClient
+                                .from('atribuicoes')
+                                .update(supabaseData)
+                                .match({
+                                    epi_codigo: epi.code,
+                                    colaborador_matricula: collaborator.registration,
+                                    data_atribuicao: assignment.assignmentDate
+                                });
+
+                            if (updateError) {
+                                console.error('❌ Erro no UPDATE:', updateError);
+                                errorCount++;
+                            } else {
+                                successCount++;
+                            }
+                        } else {
+                            console.error('❌ Erro no INSERT:', error);
+                            errorCount++;
+                        }
                     } else {
                         successCount++;
                     }
@@ -3143,8 +3161,8 @@
                 showNotification(`✅ ${successCount} atribuição(ões) enviada(s) para a nuvem${errorCount > 0 ? ` (${errorCount} erros)` : ''}`, 'success');
 
             } catch (error) {
-                console.error('Erro ao enviar atribuições para a nuvem:', error);
-                showNotification('❌ Erro ao enviar atribuições para a nuvem.', 'error');
+                console.error('❌ Erro ao enviar atribuições:', error);
+                showNotification('❌ Erro ao enviar atribuições.', 'error');
             }
         }
 
@@ -3236,7 +3254,7 @@
         }
 
         // ============================================
-        // SINCRONIZAÇÃO DE AVARIAS
+        // SINCRONIZAÇÃO DE AVARIAS - VERSÃO CORRIGIDA
         // ============================================
         async function syncDamagesToCloud() {
             if (!isSupabaseConnected || !supabaseClient) {
@@ -3267,16 +3285,15 @@
                         descricao: damage.description,
                         solucao: damage.solution || '',
                         observacoes: damage.observations || '',
-                        status: damage.status,
-                        usuario_registro: damage.reportedBy,
-                        updated_at: new Date().toISOString()
+                        status: damage.status || 'Registrada',
+                        usuario_registro: damage.reportedBy || currentUser?.name || 'Sistema'
+                        // REMOVA on_conflict da chamada!
                     };
 
+                    // Use INSERT simples, sem on_conflict
                     const { error } = await supabaseClient
                         .from('avarias')
-                        .upsert(supabaseData, {
-                            onConflict: 'epi_codigo,data_avaria'
-                        });
+                        .insert(supabaseData);
 
                     if (error) {
                         console.error('Erro ao enviar avaria:', error);
