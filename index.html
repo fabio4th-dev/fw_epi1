@@ -2603,7 +2603,7 @@
     <footer class="site-footer">
         <div class="footer-content">
             <p>Desenvolvido por Fábio Mendes Rodrigues, Planejador da F.W. Company</p>
-            <p class="footer-version">Sistema de Gestão de EPIs - Revisão 01</p>
+            <p class="footer-version">Sistema de Gestão de EPIs - Revisão 02</p>
         </div>
     </footer>
 
@@ -6701,6 +6701,849 @@
                 totalOriginal: epi ? (epi.quantity + activeAssignments) : 0
             };
         }
+        // ============================================
+        // FUNÇÕES PARA LIMPAR CACHE E BAIXAR DADOS AUTOMATICAMENTE
+        // ============================================
+
+        // Função para limpar todo o cache (ZERAR TUDO)
+        async function limparTodoCache() {
+            if (!confirm('⚠️ ATENÇÃO! Você está prestes a:\n\n' +
+                '• Deletar TODOS os EPIs cadastrados\n' +
+                '• Deletar TODOS os Colaboradores\n' +
+                '• Deletar TODAS as Atribuições\n' +
+                '• Deletar TODAS as Devoluções\n' +
+                '• Deletar TODAS as Avarias\n' +
+                '• Deletar TODOS os Certificados\n\n' +
+                'Esta ação NÃO PODE SER DESFEITA!\n\n' +
+                'Deseja realmente limpar todo o cache do sistema?')) {
+                return;
+            }
+
+            // Segunda confirmação para segurança
+            if (!confirm('🔥 CONFIRMAÇÃO FINAL 🔥\n\n' +
+                'Tem certeza absoluta que deseja apagar TODOS os dados do sistema?\n\n' +
+                'Digite "SIM" no campo abaixo para confirmar.')) {
+
+                // Criar prompt personalizado
+                const senhaConfirmacao = prompt('Para confirmar a limpeza total do cache, digite a palavra: LIMPAR');
+                if (senhaConfirmacao !== 'LIMPAR') {
+                    showNotification('❌ Operação cancelada - confirmação incorreta.', 'error');
+                    return;
+                }
+            }
+
+            try {
+                showNotification('🧹 Limpando todo o cache do sistema...', 'info');
+
+                // 1. Fazer backup automático antes de limpar
+                if (epis.length > 0 || collaborators.length > 0) {
+                    const backupData = {
+                        epis: epis,
+                        collaborators: collaborators,
+                        assignments: assignments,
+                        damages: damages,
+                        certificates: certificates,
+                        metadata: {
+                            sistema: "BACKUP_AUTOMATICO_ANTES_LIMPEZA",
+                            versao: "3.0",
+                            dataBackup: new Date().toISOString(),
+                            usuario: currentUser ? currentUser.name : 'Anônimo'
+                        }
+                    };
+
+                    const jsonString = JSON.stringify(backupData, null, 2);
+                    const blob = new Blob([jsonString], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `backup_automatico_antes_limpeza_${new Date().toISOString().slice(0, 10)}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+
+                    showNotification('💾 Backup automático criado antes da limpeza!', 'success');
+                }
+
+                // 2. LIMPAR TODOS OS ARRAYS
+                epis = [];
+                collaborators = [];
+                assignments = [];
+                damages = [];
+                certificates = [];
+
+                // 3. LIMPAR localStorage
+                localStorage.removeItem('epis');
+                localStorage.removeItem('collaborators');
+                localStorage.removeItem('assignments');
+                localStorage.removeItem('damages');
+                localStorage.removeItem('certificates');
+                localStorage.removeItem('lastModified');
+                localStorage.removeItem('lastAutomaticBackup');
+
+                // 4. Limpar timestamps de sincronização
+                lastSyncTimes = {
+                    epis: null,
+                    collaborators: null,
+                    assignments: null,
+                    returns: null,
+                    damages: null,
+                    catalog: null
+                };
+
+                // 5. ATUALIZAR TODAS AS INTERFACES
+                loadEpisList();
+                loadCollaboratorsList();
+                loadDamageHistory();
+                updateDashboardStats();
+                updateCategoryChart();
+                updateStatistics();
+                updateCounts();
+                updateLastSyncDisplay();
+
+                // 6. Recarregar dropdowns
+                updateAssignEpiDropdown();
+                updateCollaboratorSelect();
+                populateEpiDropdown();
+                populateResponsibleDropdown();
+
+                showNotification('✅ Cache do sistema completamente limpo! Backup automático salvo.', 'success');
+
+                console.log('🧹 Sistema completamente zerado:', {
+                    epis: epis.length,
+                    colaboradores: collaborators.length,
+                    atribuicoes: assignments.length,
+                    avarias: damages.length
+                });
+
+            } catch (error) {
+                console.error('❌ Erro ao limpar cache:', error);
+                showNotification('❌ Erro ao limpar cache do sistema.', 'error');
+            }
+        }
+
+        // Função para baixar TODOS os dados da nuvem automaticamente
+        async function baixarTodosDadosAutomatico() {
+            if (!isSupabaseConnected || !supabaseClient) {
+                showNotification('❌ Sem conexão com a nuvem. Verifique sua conexão.', 'error');
+                return;
+            }
+
+            try {
+                showNotification('📥 Baixando TODOS os dados da nuvem automaticamente...', 'info');
+
+                let totalEpis = 0;
+                let totalColaboradores = 0;
+                let totalAtribuicoes = 0;
+                let totalDevolucoes = 0;
+                let totalAvarias = 0;
+
+                // 1. BAIXAR EPIs
+                const { data: episData, error: episError } = await supabaseClient
+                    .from('epis')
+                    .select('*')
+                    .order('codigo');
+
+                if (!episError && episData) {
+                    epis = episData.map(item => ({
+                        id: item.id || Date.now(),
+                        name: item.nome_epi,
+                        code: item.codigo,
+                        category: item.categoria,
+                        caNumber: item.ca_numero,
+                        manufacturer: item.fabricante || '',
+                        status: item.status,
+                        quantity: item.quantidade,
+                        conformity: item.conformidade_nr6,
+                        inspectionObservations: item.observacoes || '',
+                        inspectionDate: item.ultima_inspecao || null,
+                        nextInspectionDate: item.proxima_inspecao || null,
+                        stockMin: item.estoque_minimo || 0,
+                        image: item.imagem || '',
+                        dataCadastro: item.data_cadastro || new Date().toISOString().split('T')[0],
+                        usuarioCadastro: item.usuario_cadastro || 'Sistema',
+                        createdAt: item.created_at || new Date().toISOString()
+                    }));
+                    totalEpis = epis.length;
+                }
+
+                // 2. BAIXAR COLABORADORES
+                const { data: colaboradoresData, error: colabError } = await supabaseClient
+                    .from('colaboradores')
+                    .select('*')
+                    .order('nome');
+
+                if (!colabError && colaboradoresData) {
+                    collaborators = colaboradoresData.map(item => ({
+                        id: item.id || Date.now(),
+                        name: item.nome,
+                        registration: item.matricula,
+                        sector: item.setor,
+                        position: item.cargo,
+                        admissionDate: item.data_admissao,
+                        status: item.status,
+                        observations: item.observacoes || '',
+                        usuarioCadastro: item.usuario_cadastro || 'Sistema',
+                        dataCadastro: item.data_cadastro || new Date().toISOString().split('T')[0]
+                    }));
+                    totalColaboradores = collaborators.length;
+                }
+
+                // 3. BAIXAR ATRIBUIÇÕES
+                const { data: atribuicoesData, error: attrError } = await supabaseClient
+                    .from('atribuicoes')
+                    .select('*')
+                    .order('data_atribuicao', { ascending: false });
+
+                if (!attrError && atribuicoesData) {
+                    assignments = [];
+                    for (const item of atribuicoesData) {
+                        const epi = epis.find(e => e.code === item.epi_codigo);
+                        const colaborador = collaborators.find(c => c.registration === item.colaborador_matricula);
+
+                        if (epi && colaborador) {
+                            assignments.push({
+                                id: item.id || Date.now() + Math.random(),
+                                collaboratorId: colaborador.id,
+                                epiId: epi.id,
+                                assignmentDate: item.data_atribuicao,
+                                expirationDate: item.data_validade,
+                                status: item.status || 'Ativo',
+                                observations: item.observacoes || '',
+                                usuarioCadastro: item.usuario_atribuicao || 'Sistema',
+                                dataCadastro: item.data_cadastro || new Date().toISOString().split('T')[0],
+                                createdAt: item.created_at || new Date().toISOString()
+                            });
+                        }
+                    }
+                    totalAtribuicoes = assignments.filter(a => a.status === 'Ativo').length;
+                }
+
+                // 4. BAIXAR DEVOLUÇÕES
+                const { data: devolucoesData, error: devError } = await supabaseClient
+                    .from('devolucoes')
+                    .select('*')
+                    .order('data_devolucao', { ascending: false });
+
+                if (!devError && devolucoesData) {
+                    let devolucoesCount = 0;
+                    for (const item of devolucoesData) {
+                        const epi = epis.find(e => e.code === item.epi_codigo);
+                        const colaborador = collaborators.find(c => c.registration === item.colaborador_matricula);
+
+                        if (epi && colaborador) {
+                            // Verificar se já existe uma atribuição com esses dados
+                            const existingAssignment = assignments.find(a =>
+                                a.epiId === epi.id &&
+                                a.collaboratorId === colaborador.id &&
+                                a.assignmentDate === item.data_atribuicao
+                            );
+
+                            if (existingAssignment) {
+                                existingAssignment.status = 'Devolvido';
+                                existingAssignment.returnDate = item.data_devolucao;
+                                existingAssignment.returnReason = item.motivo;
+                                existingAssignment.returnCondition = item.condicao;
+                                existingAssignment.returnObservations = item.observacoes || '';
+                            }
+                            devolucoesCount++;
+                        }
+                    }
+                    totalDevolucoes = devolucoesCount;
+                }
+
+                // 5. BAIXAR AVARIAS
+                const { data: avariasData, error: avariaError } = await supabaseClient
+                    .from('avarias')
+                    .select('*')
+                    .order('data_avaria', { ascending: false });
+
+                if (!avariaError && avariasData) {
+                    damages = [];
+                    for (const item of avariasData) {
+                        const epi = epis.find(e => e.code === item.epi_codigo);
+                        const responsible = collaborators.find(c => c.registration === item.colaborador_matricula);
+
+                        if (epi && responsible) {
+                            damages.push({
+                                id: item.id || Date.now() + Math.random(),
+                                epiId: epi.id,
+                                date: item.data_avaria,
+                                reason: item.motivo,
+                                responsibleId: responsible.id,
+                                description: item.descricao,
+                                solution: item.solucao || '',
+                                observations: item.observacoes || '',
+                                reportedBy: item.usuario_registro || 'Sistema',
+                                createdAt: item.created_at || new Date().toISOString(),
+                                status: item.status || 'Registrada'
+                            });
+                        }
+                    }
+                    totalAvarias = damages.length;
+                }
+
+                // 6. SALVAR TODOS OS DADOS NO LOCALSTORAGE
+                await saveAllData();
+
+                // 7. ATUALIZAR TODAS AS INTERFACES
+                loadEpisList();
+                loadCollaboratorsList();
+                loadDamageHistory();
+                updateDashboardStats();
+                updateCategoryChart();
+                updateStatistics();
+                updateCounts();
+                updateAssignEpiDropdown();
+                updateCollaboratorSelect();
+                populateEpiDropdown();
+                populateResponsibleDropdown();
+
+                lastSyncTimes = {
+                    epis: new Date(),
+                    collaborators: new Date(),
+                    assignments: new Date(),
+                    returns: new Date(),
+                    damages: new Date(),
+                    catalog: new Date()
+                };
+                updateLastSyncDisplay();
+
+                // 8. MOSTRAR RESUMO DO DOWNLOAD
+                showNotification(`✅ DOWNLOAD AUTOMÁTICO CONCLUÍDO!
+            
+📊 RESUMO:
+📦 EPIs: ${totalEpis}
+👥 Colaboradores: ${totalColaboradores}
+🪪 Atribuições Ativas: ${totalAtribuicoes}
+↩️ Devoluções: ${totalDevolucoes}
+⚠️ Avarias: ${totalAvarias}`, 'success');
+
+                console.log('📥 Download automático concluído:', {
+                    epis: totalEpis,
+                    colaboradores: totalColaboradores,
+                    atribuicoes: totalAtribuicoes,
+                    devolucoes: totalDevolucoes,
+                    avarias: totalAvarias
+                });
+
+            } catch (error) {
+                console.error('❌ Erro no download automático:', error);
+                showNotification('❌ Erro ao baixar dados da nuvem.', 'error');
+            }
+        }
+
+        // ============================================
+        // ADICIONAR BOTÕES NA INTERFACE
+        // ============================================
+        function adicionarBotoesCacheEDownload() {
+            // Encontrar a aba de Banco de Dados
+            const databaseTab = document.getElementById('database');
+            if (!databaseTab) return;
+
+            // Verificar se os botões já existem
+            if (document.getElementById('limparCacheBtn')) return;
+
+            // Criar seção para os novos botões
+            const novaSecao = document.createElement('div');
+            novaSecao.style.marginTop = '30px';
+            novaSecao.style.marginBottom = '20px';
+            novaSecao.innerHTML = `
+        <div style="border-top: 2px solid var(--danger-color); margin-bottom: 20px;"></div>
+        
+        <h4 style="color: var(--primary-color); margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-tools" style="color: var(--danger-color);"></i> 
+            FERRAMENTAS DE SISTEMA
+        </h4>
+        
+        <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 25px;">
+            <!-- BOTÃO DE LIMPAR CACHE -->
+            <button id="limparCacheBtn" class="btn btn-danger" style="background-color: #c0392b; border: none; padding: 14px 25px; font-size: 16px; font-weight: 600;">
+                <i class="fas fa-broom" style="margin-right: 10px;"></i>
+                🧹 LIMPAR TODO O CACHE (ZERAR SISTEMA)
+            </button>
+            
+            <!-- BOTÃO DE DOWNLOAD AUTOMÁTICO -->
+            <button id="downloadAutomaticoBtn" class="btn btn-success" style="background-color: #27ae60; border: none; padding: 14px 25px; font-size: 16px; font-weight: 600;">
+                <i class="fas fa-cloud-download-alt" style="margin-right: 10px;"></i>
+                📥 BAIXAR TUDO DA NUVEM (AUTOMÁTICO)
+            </button>
+        </div>
+        
+        <div style="background-color: #fff3cd; border-left: 4px solid var(--warning-color); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <i class="fas fa-exclamation-triangle" style="font-size: 24px; color: var(--warning-color);"></i>
+                <div>
+                    <strong style="color: #856404; font-size: 15px;">⚠️ ATENÇÃO - BOTÕES CRÍTICOS</strong>
+                    <p style="color: #856404; margin-top: 5px; font-size: 13px;">
+                        • <strong>LIMPAR CACHE:</strong> Apaga TODOS os dados do sistema. Backup automático é criado antes da limpeza.<br>
+                        • <strong>DOWNLOAD AUTOMÁTICO:</strong> Baixa EPIs, Colaboradores, Atribuições, Devoluções e Avarias da nuvem.
+                    </p>
+                </div>
+            </div>
+        </div>
+    `;
+
+            // Adicionar a nova seção após os botões existentes
+            const formContainer = databaseTab.querySelector('.form-container');
+            if (formContainer) {
+                formContainer.appendChild(novaSecao);
+            }
+
+            // Adicionar event listeners aos botões
+            setTimeout(() => {
+                const limparBtn = document.getElementById('limparCacheBtn');
+                if (limparBtn) {
+                    limparBtn.addEventListener('click', limparTodoCache);
+                }
+
+                const downloadBtn = document.getElementById('downloadAutomaticoBtn');
+                if (downloadBtn) {
+                    downloadBtn.addEventListener('click', baixarTodosDadosAutomatico);
+                }
+            }, 100);
+        }
+
+        // Sobrescrever o initializeSystem para incluir os novos botões
+        const originalInitializeSystem = initializeSystem;
+        initializeSystem = async function () {
+            await originalInitializeSystem.call(this);
+            adicionarBotoesCacheEDownload();
+        };
+
+        // Adicionar também quando a aba de banco de dados for aberta
+        document.addEventListener('DOMContentLoaded', function () {
+            const originalTabClick = document.querySelectorAll('.tab-button')?.forEach;
+            if (originalTabClick) {
+                document.querySelectorAll('.tab-button').forEach(button => {
+                    button.addEventListener('click', function () {
+                        const tabId = this.getAttribute('data-tab');
+                        if (tabId === 'database') {
+                            setTimeout(adicionarBotoesCacheEDownload, 200);
+                        }
+                    });
+                });
+            }
+        });
+        // ============================================
+        // DOWNLOAD AUTOMÁTICO AO INICIAR O SISTEMA
+        // ============================================
+
+        // Função modificada para baixar dados automaticamente sem notificações excessivas
+        async function baixarDadosAutomaticoInicial(silencioso = true) {
+            if (!isSupabaseConnected || !supabaseClient) {
+                console.log('⚠️ Download automático: Sem conexão com nuvem');
+                if (!silencioso) {
+                    showNotification('❌ Sem conexão com a nuvem para download automático.', 'error');
+                }
+                return false;
+            }
+
+            try {
+                if (!silencioso) {
+                    showNotification('📥 Baixando dados da nuvem automaticamente...', 'info');
+                } else {
+                    console.log('📥 Download automático silencioso iniciado...');
+                }
+
+                let totalEpis = 0;
+                let totalColaboradores = 0;
+                let totalAtribuicoes = 0;
+                let totalDevolucoes = 0;
+                let totalAvarias = 0;
+
+                // 1. BAIXAR EPIs
+                const { data: episData, error: episError } = await supabaseClient
+                    .from('epis')
+                    .select('*')
+                    .order('codigo');
+
+                if (!episError && episData && episData.length > 0) {
+                    epis = episData.map(item => ({
+                        id: item.id || Date.now(),
+                        name: item.nome_epi,
+                        code: item.codigo,
+                        category: item.categoria,
+                        caNumber: item.ca_numero,
+                        manufacturer: item.fabricante || '',
+                        status: item.status,
+                        quantity: item.quantidade || 1,
+                        conformity: item.conformidade_nr6,
+                        inspectionObservations: item.observacoes || '',
+                        inspectionDate: item.ultima_inspecao || null,
+                        nextInspectionDate: item.proxima_inspecao || null,
+                        stockMin: item.estoque_minimo || 0,
+                        image: item.imagem || '',
+                        dataCadastro: item.data_cadastro || new Date().toISOString().split('T')[0],
+                        usuarioCadastro: item.usuario_cadastro || 'Sistema',
+                        createdAt: item.created_at || new Date().toISOString()
+                    }));
+                    totalEpis = epis.length;
+                    console.log(`✅ Download automático: ${totalEpis} EPIs carregados`);
+                }
+
+                // 2. BAIXAR COLABORADORES
+                const { data: colaboradoresData, error: colabError } = await supabaseClient
+                    .from('colaboradores')
+                    .select('*')
+                    .order('nome');
+
+                if (!colabError && colaboradoresData && colaboradoresData.length > 0) {
+                    collaborators = colaboradoresData.map(item => ({
+                        id: item.id || Date.now(),
+                        name: item.nome,
+                        registration: item.matricula,
+                        sector: item.setor,
+                        position: item.cargo,
+                        admissionDate: item.data_admissao,
+                        status: item.status,
+                        observations: item.observacoes || '',
+                        usuarioCadastro: item.usuario_cadastro || 'Sistema',
+                        dataCadastro: item.data_cadastro || new Date().toISOString().split('T')[0]
+                    }));
+                    totalColaboradores = collaborators.length;
+                    console.log(`✅ Download automático: ${totalColaboradores} colaboradores carregados`);
+                }
+
+                // 3. BAIXAR ATRIBUIÇÕES
+                const { data: atribuicoesData, error: attrError } = await supabaseClient
+                    .from('atribuicoes')
+                    .select('*')
+                    .order('data_atribuicao', { ascending: false });
+
+                if (!attrError && atribuicoesData && atribuicoesData.length > 0) {
+                    assignments = [];
+                    for (const item of atribuicoesData) {
+                        const epi = epis.find(e => e.code === item.epi_codigo);
+                        const colaborador = collaborators.find(c => c.registration === item.colaborador_matricula);
+
+                        if (epi && colaborador) {
+                            assignments.push({
+                                id: item.id || Date.now() + Math.random(),
+                                collaboratorId: colaborador.id,
+                                epiId: epi.id,
+                                assignmentDate: item.data_atribuicao,
+                                expirationDate: item.data_validade,
+                                status: item.status || 'Ativo',
+                                observations: item.observacoes || '',
+                                usuarioCadastro: item.usuario_atribuicao || 'Sistema',
+                                dataCadastro: item.data_cadastro || new Date().toISOString().split('T')[0],
+                                createdAt: item.created_at || new Date().toISOString()
+                            });
+                        }
+                    }
+                    totalAtribuicoes = assignments.filter(a => a.status === 'Ativo').length;
+                    console.log(`✅ Download automático: ${totalAtribuicoes} atribuições ativas carregadas`);
+                }
+
+                // 4. BAIXAR DEVOLUÇÕES
+                const { data: devolucoesData, error: devError } = await supabaseClient
+                    .from('devolucoes')
+                    .select('*')
+                    .order('data_devolucao', { ascending: false });
+
+                if (!devError && devolucoesData && devolucoesData.length > 0) {
+                    let devolucoesCount = 0;
+                    for (const item of devolucoesData) {
+                        const epi = epis.find(e => e.code === item.epi_codigo);
+                        const colaborador = collaborators.find(c => c.registration === item.colaborador_matricula);
+
+                        if (epi && colaborador) {
+                            const existingAssignment = assignments.find(a =>
+                                a.epiId === epi.id &&
+                                a.collaboratorId === colaborador.id &&
+                                a.assignmentDate === item.data_atribuicao
+                            );
+
+                            if (existingAssignment) {
+                                existingAssignment.status = 'Devolvido';
+                                existingAssignment.returnDate = item.data_devolucao;
+                                existingAssignment.returnReason = item.motivo;
+                                existingAssignment.returnCondition = item.condicao;
+                                existingAssignment.returnObservations = item.observacoes || '';
+                            }
+                            devolucoesCount++;
+                        }
+                    }
+                    totalDevolucoes = devolucoesCount;
+                    console.log(`✅ Download automático: ${totalDevolucoes} devoluções carregadas`);
+                }
+
+                // 5. BAIXAR AVARIAS
+                const { data: avariasData, error: avariaError } = await supabaseClient
+                    .from('avarias')
+                    .select('*')
+                    .order('data_avaria', { ascending: false });
+
+                if (!avariaError && avariasData && avariasData.length > 0) {
+                    damages = [];
+                    for (const item of avariasData) {
+                        const epi = epis.find(e => e.code === item.epi_codigo);
+                        const responsible = collaborators.find(c => c.registration === item.colaborador_matricula);
+
+                        if (epi && responsible) {
+                            damages.push({
+                                id: item.id || Date.now() + Math.random(),
+                                epiId: epi.id,
+                                date: item.data_avaria,
+                                reason: item.motivo,
+                                responsibleId: responsible.id,
+                                description: item.descricao,
+                                solution: item.solucao || '',
+                                observations: item.observacoes || '',
+                                reportedBy: item.usuario_registro || 'Sistema',
+                                createdAt: item.created_at || new Date().toISOString(),
+                                status: item.status || 'Registrada'
+                            });
+                        }
+                    }
+                    totalAvarias = damages.length;
+                    console.log(`✅ Download automático: ${totalAvarias} avarias carregadas`);
+                }
+
+                // 6. SALVAR TODOS OS DADOS NO LOCALSTORAGE
+                await saveAllData();
+
+                // 7. ATUALIZAR TODAS AS INTERFACES (APENAS SE HOUVER DADOS)
+                if (totalEpis > 0 || totalColaboradores > 0) {
+                    loadEpisList();
+                    loadCollaboratorsList();
+                    loadDamageHistory();
+                    updateDashboardStats();
+                    updateCategoryChart();
+                    updateStatistics();
+                    updateCounts();
+                    updateAssignEpiDropdown();
+                    updateCollaboratorSelect();
+                    populateEpiDropdown();
+                    populateResponsibleDropdown();
+                }
+
+                lastSyncTimes = {
+                    epis: new Date(),
+                    collaborators: new Date(),
+                    assignments: new Date(),
+                    returns: new Date(),
+                    damages: new Date(),
+                    catalog: new Date()
+                };
+                updateLastSyncDisplay();
+
+                // 8. MOSTRAR NOTIFICAÇÃO APENAS SE HOUVER MUITOS DADOS OU SE NÃO FOR SILENCIOSO
+                const totalGeral = totalEpis + totalColaboradores + totalAtribuicoes + totalDevolucoes + totalAvarias;
+
+                if (!silencioso && totalGeral > 0) {
+                    showNotification(`📥 Download automático concluído!\n\n📊 ${totalEpis} EPIs | 👥 ${totalColaboradores} Colabs | 🪪 ${totalAtribuicoes} Atrib. | ⚠️ ${totalAvarias} Avar.`, 'success');
+                } else if (totalGeral > 0) {
+                    console.log(`✅ Download automático silencioso concluído: ${totalGeral} itens carregados`);
+                }
+
+                return true;
+
+            } catch (error) {
+                console.error('❌ Erro no download automático inicial:', error);
+                if (!silencioso) {
+                    showNotification('❌ Erro ao baixar dados da nuvem automaticamente.', 'error');
+                }
+                return false;
+            }
+        }
+
+        // ============================================
+        // SUBSTITUIR A FUNÇÃO initializeSystem ORIGINAL
+        // ============================================
+
+        // Salvar referência da função original se existir
+        const initializeSystemOriginal = window.initializeSystem || function () { };
+
+        // Nova função initializeSystem com download automático
+        window.initializeSystem = async function () {
+            try {
+                console.log('🔧 INICIALIZANDO SISTEMA DE EPIs COM DOWNLOAD AUTOMÁTICO');
+                console.log('👤 Usuário atual:', currentUser?.name || 'Não autenticado');
+                console.log('🔑 Nível de acesso:', currentUser?.role || 'Nenhum');
+
+                // 1. INICIALIZAR SUPABASE
+                await initializeSupabase();
+
+                // 2. VERIFICAR SE TEM DADOS LOCAIS
+                const hasLocalData = localStorage.getItem('epis') !== null;
+
+                // 3. SE ESTIVER CONECTADO À NUVEM, FAZER DOWNLOAD AUTOMÁTICO
+                if (isSupabaseConnected) {
+                    console.log('☁️ Conexão com nuvem estabelecida. Iniciando download automático...');
+
+                    // TENTAR BAIXAR DADOS DA NUVEM (SILENCIOSO)
+                    await baixarDadosAutomaticoInicial(true);
+
+                    console.log('✅ Download automático concluído');
+                } else {
+                    console.log('⚠️ Sem conexão com nuvem. Usando dados locais...');
+
+                    // CARREGAR DADOS LOCAIS
+                    await loadInitialData();
+                }
+
+                // 4. ATUALIZAR TODAS AS INTERFACES
+                updateDashboardStats();
+                updateStatistics();
+                loadEpisList();
+                loadCollaboratorsList();
+                updateCategoryChart();
+                initializeEpiForm();
+                initializeReturnTab();
+                initializeDamageTab();
+                setupSyncButtons();
+                setupBackupButton();
+                updateCounts();
+                setupAutomaticBackup();
+
+                // 5. ADICIONAR BOTÕES DE CACHE E DOWNLOAD
+                adicionarBotoesCacheEDownload();
+
+                // 6. NOTIFICAÇÃO DE BOAS-VINDAS COM RESUMO
+                setTimeout(() => {
+                    const totalEpisCount = epis.length;
+                    const totalColabsCount = collaborators.length;
+                    const totalAtribCount = assignments.filter(a => a.status === 'Ativo').length;
+
+                    showNotification(
+                        ` Bem-vindo, ${currentUser?.name || 'Usuário'}!\n\n` +
+                        `📊 Sistema carregado:\n` +
+                        `📦 ${totalEpisCount} EPIs | 👥 ${totalColabsCount} Colabs | 🪪 ${totalAtribCount} Atribuições\n` +
+                        `${isSupabaseConnected ? '☁️ Conectado à nuvem' : '⚠️ Modo offline'}`,
+                        'success'
+                    );
+                }, 500);
+
+                console.log('✅ Sistema inicializado com sucesso!');
+
+            } catch (error) {
+                console.error('❌ Erro na inicialização:', error);
+                showNotification('Erro ao inicializar sistema. Carregando dados locais...', 'error');
+
+                // TENTAR CARREGAR DADOS LOCAIS EM CASO DE ERRO
+                await loadInitialData();
+            }
+        };
+
+        // ============================================
+        // GARANTIR QUE O DOWNLOAD AUTOMÁTICO ACONTEÇA EM TODOS OS CENÁRIOS
+        // ============================================
+
+        // 1. Quando o sistema é inicializado após login
+        const originalShowDashboard = window.showDashboard;
+        window.showDashboard = function () {
+            if (originalShowDashboard) {
+                originalShowDashboard.call(this);
+            }
+
+            // Inicializar sistema com download automático
+            setTimeout(async () => {
+                await initializeSystem();
+            }, 100);
+        };
+
+        // 2. Quando a página é carregada/atualizada
+        document.addEventListener('DOMContentLoaded', function () {
+            // Verificar se já está logado
+            const savedUser = localStorage.getItem('currentUser');
+            if (savedUser) {
+                try {
+                    currentUser = JSON.parse(savedUser);
+                    if (currentUser && users[currentUser.key]) {
+                        // Se já estiver logado, fazer download automático
+                        setTimeout(async () => {
+                            await initializeSupabase();
+                            if (isSupabaseConnected) {
+                                await baixarDadosAutomaticoInicial(true);
+                            }
+                        }, 200);
+                    }
+                } catch (e) {
+                    console.error('Erro ao restaurar sessão:', e);
+                }
+            }
+        });
+
+        // 3. Quando a conexão com Supabase é estabelecida
+        const originalInitializeSupabase = window.initializeSupabase;
+        window.initializeSupabase = async function () {
+            await originalInitializeSupabase.call(this);
+
+            // Se conectou e tem usuário logado, fazer download automático
+            if (isSupabaseConnected && currentUser) {
+                setTimeout(async () => {
+                    await baixarDadosAutomaticoInicial(true);
+                }, 300);
+            }
+        };
+
+        // 4. Forçar download automático após login bem-sucedido
+        const originalLogin = window.login;
+        window.login = function () {
+            const result = originalLogin.call(this);
+
+            // Após login bem-sucedido, fazer download automático
+            setTimeout(async () => {
+                if (isSupabaseConnected) {
+                    console.log('🔄 Login detectado, iniciando download automático...');
+                    await baixarDadosAutomaticoInicial(false); // Não silencioso no login
+                }
+            }, 500);
+
+            return result;
+        };
+        // ============================================
+        // ADICIONAR INDICADOR DE DOWNLOAD AUTOMÁTICO NO HEADER
+        // ============================================
+        function adicionarIndicadorDownloadAutomatico() {
+            const userInfo = document.querySelector('.user-info');
+            if (!userInfo) return;
+
+            // Verificar se já existe
+            if (document.getElementById('autoDownloadIndicator')) return;
+
+            const indicator = document.createElement('div');
+            indicator.id = 'autoDownloadIndicator';
+            indicator.style.marginLeft = '10px';
+            indicator.style.display = 'inline-flex';
+            indicator.style.alignItems = 'center';
+            indicator.style.gap = '5px';
+
+            // Atualizar status a cada 30 segundos
+            function updateIndicator() {
+                if (isSupabaseConnected) {
+                    indicator.innerHTML = `
+                <span style="background-color: rgba(46, 204, 113, 0.2); padding: 5px 10px; border-radius: 20px; font-size: 12px; color: #27ae60; display: flex; align-items: center; gap: 5px;">
+                    <i class="fas fa-cloud-download-alt"></i>
+                    Download automático ativo
+                </span>
+            `;
+                } else {
+                    indicator.innerHTML = `
+                <span style="background-color: rgba(231, 76, 60, 0.2); padding: 5px 10px; border-radius: 20px; font-size: 12px; color: #e74c3c; display: flex; align-items: center; gap: 5px;">
+                    <i class="fas fa-cloud"></i>
+                    Modo offline
+                </span>
+            `;
+                }
+            }
+
+            updateIndicator();
+            setInterval(updateIndicator, 30000);
+
+            userInfo.appendChild(indicator);
+        }
+
+        // Adicionar ao mostrar dashboard
+        const originalShowDashboardWithIndicator = window.showDashboard;
+        window.showDashboard = function () {
+            if (originalShowDashboardWithIndicator) {
+                originalShowDashboardWithIndicator.call(this);
+            }
+            setTimeout(adicionarIndicadorDownloadAutomatico, 200);
+        };
         // ============================================
         // CONTAR QUANTOS EPIs ESTÃO EM USO (ATRIBUIÇÕES ATIVAS)
         // ============================================
